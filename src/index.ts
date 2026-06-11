@@ -33,9 +33,10 @@ class MCPClient {
   }
 
   //connecting to MCP server
-  async connectToServer(serverScriptPath: string) {
-  try {
-    const isJs = serverScriptPath.endsWith(".js");
+  async connectToServer(serverScriptPath: string, serverType : 'local' | 'remote') {
+
+    if(serverType === 'local'){
+            const isJs = serverScriptPath.endsWith(".js");
     const isPy = serverScriptPath.endsWith(".py");
     if (!isJs && !isPy) {
       throw new Error("Server script must be a .js or .py file");
@@ -51,7 +52,14 @@ class MCPClient {
       command,
       args: [serverScriptPath],
     });
-    await this.mcp.connect(this.transport); //connects to MCP server
+    } else if(serverType === 'remote'){
+        //Streamable HTTP transport 
+        const url = new URL(serverScriptPath);
+      this.transport =  new StreamableHTTPClientTransport(url)
+    }
+  try {
+    
+    await this.mcp.connect(this.transport as Transport); //connects to MCP server
 
     const toolsResult = await this.mcp.listTools();
    
@@ -172,7 +180,7 @@ async function main() {
   }
   const mcpClient = new MCPClient();
   try {
-    await mcpClient.connectToServer(process.argv[2]);
+    await mcpClient.connectToServer(process.argv[2] , 'remote');
     await mcpClient.chatLoop();
   } catch (e) {
     console.error("Error:", e);
