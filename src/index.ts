@@ -32,6 +32,7 @@ class MCPClient {
     });
   }
 
+  //connecting to MCP server
   async connectToServer(serverScriptPath: string) {
   try {
     const isJs = serverScriptPath.endsWith(".js");
@@ -73,6 +74,95 @@ class MCPClient {
     throw e;
   }
 }
+
+//processing user query
+async processQuery(query: string) {
+  const messages: Groq.Chat.Completions.ChatCompletionMessageParam[] = [
+    {
+      role: "user",
+      content: query,
+    },
+  ];
+
+  //llm call
+  const response = await this.groq.chat.completions.create({
+    model: "qwen/qwen3-32b",
+      messages,
+      tools: this.tools,
+  });
+
+  const finalText = [];
+  const choice = response.choices[0];
+  const assistantMessage = choice.message;
+
+  if(assistantMessage){
+    finalText.push(assistantMessage.content);
+  }
+
+  //check if tool call required
+  if(assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0){
+    messages.push(assistantMessage);
+
+    for(const toolCall of assistantMessage.tool_calls){
+        if(toolCall.type !== 'function') continue;
+
+        const toolName = toolCall.function.name;
+        const toolArgs = JSON.parse(toolCall.function.arguments);
+
+        finalText.push(`[Calling tool ${toolName} with args ${toolCall.function.arguments}]`);
+
+        //calling tool - Through MCP server
+       const result =  await this.mcp.callTool({
+            name: toolName,
+            arguments:toolArgs,
+        })
+
+        messages.push({
+            role:'tool',
+            tool_call_id:toolCall.id,
+            content: JSON.stringify(result.content)
+        })
+    }
+
+    const followUpresonse = await this.groq.chat.completions.create({
+         model: "qwen/qwen3-32b",
+        messages,
+    })
+
+    if(followUpresonse.choices[0].message.content){
+        finalText.push(followUpresonse.choices[0].message.content);
+    }
+  }
+
+  return finalText.join("\n");
+}
+
+async chatLoop() {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  try {
+    console.log("\nMCP Client Started!");
+    console.log("Type your queries or 'quit' to exit.");
+
+    while (true) {
+      const message = await rl.question("\nQuery: ");
+      if (message.toLowerCase() === "/bye") {
+        break;
+      }
+      const response = await this.processQuery(message);
+      console.log("\n" + response);
+    }
+  } finally {
+    rl.close();
+  }
+}
+
+async cleanup() {
+  await this.mcp.close();
+}
 }
 
 async function main() {
@@ -83,14 +173,14 @@ async function main() {
   const mcpClient = new MCPClient();
   try {
     await mcpClient.connectToServer(process.argv[2]);
-    /* await mcpClient.chatLoop(); */
+    await mcpClient.chatLoop();
   } catch (e) {
     console.error("Error:", e);
-   /*  await mcpClient.cleanup();
-    process.exit(1); */
+    await mcpClient.cleanup();
+    process.exit(1);
   } finally {
-   /*  await mcpClient.cleanup();
-    process.exit(0); */
+    await mcpClient.cleanup();
+    process.exit(0);
   }
 }
 
